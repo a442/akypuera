@@ -158,12 +158,12 @@ otf2-print $INPUT | tail -n +6 |
 	fi
 
 	TIMESTAMP=`echo "($TIMESTAMP - $FIRST_TIMESTAMP) / $RESOLUTION" | bc -l | sed "s/0*$/0/"`
-	
+
 	#TID equals 0 should be renamed to "zero" so Paje can accept it
 	if [ $TID == "0" ] ; then
 	    TID="zero"
 	fi
-	
+
 	# check if TID was already PajeCreateContainer
 	if [ -z "${tids[$TID]}" ] ; then
 	    echo "6 $TIMESTAMP $TID THREAD 0 $TID" #PajeCreateContainer
@@ -172,14 +172,31 @@ otf2-print $INPUT | tail -n +6 |
 
 	case $CODE in
 	    "ENTER" )
-		STATE=`echo $LINHA | cut -d" " -f5-20 | sed "s/\"//g"`
+    STATE=`echo $LINHA | cut -d" " -f5-20 | sed "s/\"//g"`
 		echo "12 $TIMESTAMP $TID STATE \"$STATE\"" #PajePushState
 		;;
-
 	    "LEAVE" )
-		STATE=`echo $LINHA | cut -d" " -f5-20 | sed "s/\"//g"`
 		echo "14 $TIMESTAMP $TID STATE" #PajePopState
 		;;
+	    "MPI_SEND" )
+	    "MPI_ISEND" )
+		LINK=`echo $LINHA | cut -d" " -f5- | sed "s/\"//g"`
+    RLINK=`echo $LINK | rev`
+    DST=`echo $LINK | cut -d' ' -f1`
+    LENGTH=`echo $RLINK | cut -d' ' -f3 | sed 's/,//g'`
+    MARK=`echo $RLINK | cut -d' ' -f1`
+    # The key is generated at aky_keys.c::new_element
+    echo "18 $TIMESTAMP root LINK $TID PTP ${TID}_${DST}_${MARK} $LENGTH $MARK"
+		;;
+      "MPI_ISEND_COMPLETE" )
+    MARK=`echo $LINHA | rev | cut -d' ' -f1`
+    # Notice we DO NOT have DST info here, but I don't need the key
+    # field on the compensation tool, so ignore it
+    echo "19 $TIMESTAMP root LINK $TID PTP ${TID}_DST_${MARK}"
+    ;;
+      "MPI_RECV" )
+       # TODO: problema:  tem quando tem SEND (precisa link) e ISEND (nao pode criar link) :/
+    ;;
 	    "THREAD_FORK" )
 		;;
 	    "THREAD_TEAM_BEGIN" )
@@ -191,4 +208,7 @@ otf2-print $INPUT | tail -n +6 |
 	    * )
 	    ;;
 	esac
-    done
+done
+
+# Kludge for MPI_Wait with mark
+# perl -0777 -pe 's/(MPI_Wait.*)(\n.+\d+_DST_)(\d+)/\1 \3\2\3/g' tes

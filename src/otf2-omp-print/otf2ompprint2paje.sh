@@ -120,6 +120,16 @@ echo "#This trace was generated with: otf2ompprint2paje.sh $INPUT
 %       Value string
 %       Key string
 %EndEventDef
+%EventDef PajeStartLink 18
+%       Time date
+%       Container string
+%       Type string
+%       StartContainer string
+%       Value string
+%       Key string
+%       Size double
+%       Mark string
+%EndEventDef
 %EventDef PajeEndLink 19
 %       Time date
 %       Container string
@@ -138,10 +148,14 @@ echo "#This trace was generated with: otf2ompprint2paje.sh $INPUT
 # print type hierarchy
 
 echo "0 THREAD 0 \"THREAD\"
-2 STATE THREAD \"STATE\""
+2 STATE THREAD \"STATE\"
+4 LINK 0 THREAD THREAD \"LINK\"
+"
 
 # convert events
 declare -A tids
+declare -A sends
+declare -A recvs
 
 FIRST_TIMESTAMP=""
 RESOLUTION=1000000
@@ -178,37 +192,46 @@ otf2-print $INPUT | tail -n +6 |
 	    "LEAVE" )
 		echo "14 $TIMESTAMP $TID STATE" #PajePopState
 		;;
-	    "MPI_SEND" )
-	    "MPI_ISEND" )
+	    "MPI_ISEND" | "MPI_SEND" )
 		LINK=`echo $LINHA | cut -d" " -f5- | sed "s/\"//g"`
     RLINK=`echo $LINK | rev`
     DST=`echo $LINK | cut -d' ' -f1`
     LENGTH=`echo $RLINK | cut -d' ' -f3 | sed 's/,//g'`
-    MARK=`echo $RLINK | cut -d' ' -f1`
     # The key is generated at aky_keys.c::new_element
-    echo "18 $TIMESTAMP root LINK $TID PTP ${TID}_${DST}_${MARK} $LENGTH $MARK"
+    if test -z ${sends[$DST]}
+    then
+      sends[$DST]=0
+    fi
+    echo "18 $TIMESTAMP 0 LINK $TID PTP ${TID}_${DST}_${sends[$DST]} $LENGTH ${sends[$DST]}"
+    sends[$DST]=$((sends[$DST] + 1))
 		;;
-      "MPI_ISEND_COMPLETE" )
-    MARK=`echo $LINHA | rev | cut -d' ' -f1`
-    # Notice we DO NOT have DST info here, but I don't need the key
-    # field on the compensation tool, so ignore it
-    echo "19 $TIMESTAMP root LINK $TID PTP ${TID}_DST_${MARK}"
-    ;;
       "MPI_RECV" )
-       # TODO: problema:  tem quando tem SEND (precisa link) e ISEND (nao pode criar link) :/
-    ;;
-	    "THREAD_FORK" )
-		;;
-	    "THREAD_TEAM_BEGIN" )
-		;;
-	    "THREAD_TEAM_END" )
-		;;
-	    "THREAD_JOIN" )
-		;;
-	    * )
-	    ;;
-	esac
-done
+        LINK=`echo $LINHA | cut -d" " -f5- | sed "s/\"//g"`
+        SRC=`echo $LINK | cut -d' ' -f1 | sed 's/0/zero/'`
+        if test -z ${recvs[$TID]}
+        then
+          recvs[$TID]=0
+        fi
+        if test -z ${sends[$TID]} || test ${sends[$TID]} -lt ${recvs[$TID]}
+        then
+          echo "No send for recv on rank $TID mark ${recvs[$TID]}"
+          exit
+        fi
+        echo "19 $TIMESTAMP 0 LINK $TID PTP ${SRC}_${TID}_${recvs[$TID]}"
+        recvs[$TID]=$((recvs[$TID] + 1))
+        ;;
+      "THREAD_FORK" )
+        ;;
+      "THREAD_TEAM_BEGIN" )
+        ;;
+      "THREAD_TEAM_END" )
+        ;;
+      "THREAD_JOIN" )
+        ;;
+      * )
+        ;;
+    esac
+  done
 
 # Kludge for MPI_Wait with mark
-# perl -0777 -pe 's/(MPI_Wait.*)(\n.+\d+_DST_)(\d+)/\1 \3\2\3/g' tes
+# perl -0777 -pe 's/(MPI_Wait.*)(\n.+_.+_)(\d+)/\1 \3\2\3/g' tes

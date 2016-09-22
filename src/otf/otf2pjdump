@@ -1,0 +1,109 @@
+#!/bin/sh
+
+# TODO how does the link printing order affects the compensation tool?
+
+declare -A function_symbols #[id]
+declare -A tid_symbols #[tid]
+# TODO necessary?
+resolution=0
+declare -A stack #[tid,index]
+declare -A tid_indexes #[tid]
+
+declare -A link_stack #[matching_tid(put, pop = tid),index]
+declare -A link_tid_indexes #[^]
+declare -A link_tid_indexes_permanent #[^]
+
+otfdump $1 | perl -pe 's/[ \t]+/ / ; s/,//g' | grep -v 'Counter:' | while read line
+do
+  tokens=( $line )
+  timestamp_nonadjusted=${tokens[1]}
+  case "$timestamp_nonadjusted" in
+    "DefTimerResolution:" )
+      resolution=${tokens[-1]}
+      continue
+      ;;
+    "DefFunction:" )
+      #${function_symbols[${tokens[5]}]}=${tokens[7]}
+      function_symbols[${tokens[5]}]="$(echo $line | grep -shoPe '".+"')"
+      continue
+      ;;
+    "DefProcess:" )
+      tid_symbols[${tokens[5]}]="$(echo $line | grep -shoPe '".+"')"
+      continue
+      ;;
+  esac
+  timestamp_adjusted=$(echo "$timestamp_nonadjusted / $resolution" | bc -l 2>/dev/null)
+  if test -z $timestamp_adjusted
+  then
+    #echo "=$line="
+    continue
+  fi
+  event_type=${tokens[2]}
+  case $event_type in
+    "Enter:" | "Leave:" )
+      event_id=${tokens[4]}
+      event_tid=${tokens[6]}
+      if test "$event_type" = "Enter:"
+      then
+        if test -z ${tid_indexes[$event_tid]}
+        then
+          tid_indexes[$event_tid]=0
+        fi
+        stack[$event_tid,${tid_indexes[$event_tid]}]=$timestamp_adjusted
+        tid_indexes[$event_tid]=$((${tid_indexes[$event_tid]} + 1))
+      else # Leave
+        if test -z ${tid_indexes[$event_id]} || test ${tid_indexes[$event_id]} -le 0
+        then
+          echo "Tried to pop a state from an empty stack at tid($event_id) line($line)"
+          exit
+        fi
+        tid_indexes[$event_tid]=$((${tid_indexes[$event_tid]} - 1))
+        enter_=${stack[$event_tid,${tid_indexes[$event_tid]}]}
+        exit_=$timestamp_adjusted
+        # TODO function
+        duration=$(echo "$exit_ - $enter_" | bc -l 2>/dev/null)
+        if test -z $duration
+        then
+          echo "Failed state duration. Enter($enter_) Exit($exit_) at tid($event_tid) index(${tid_indexes[$event_tid]}) line($line)"
+          exit
+        fi
+        # FIXME
+        imbrication=0
+        echo "State, ${tid_symbols[$event_tid]}, STATE, $enter_, $exit_, $duration, $imbrication, ${function_symbols[$event_id]}"
+      fi
+      ;;
+    "SendMessage:" | "ReceiveMessage:" )
+      event_tid=${tokens[4]}
+      matching_tid=${tokens[6]}
+      # event_group=${tokens[8]}
+      # event_type=${tokens[10]}
+      msg_size=${tokens[12]}
+      if test "$event_type" = "SendMessage:"
+      then
+        if test -z ${link_tid_indexes[$matching_tid]}
+        then
+          link_tid_indexes[$matching_tid]=0
+        fi
+        link_stack[$matching_tid,${link_tid_indexes[$matching_tid]}]=$timestamp_adjusted
+        link_tid_indexes[$matching_tid]=$((${link_tid_indexes[$matching_tid]} + 1))
+        link_tid_indexes_permanent[$matching_tid]=$((${link_tid_indexes_permanent[$matching_tid]} + 1))
+      else # Recv
+        if test -z ${link_tid_indexes[$event_tid]} || test ${link_tid_indexes[$event_tid]} -le 0
+        then
+          echo "Tried to pop a link from an empty stack at tid($event_tid) matching($matching_tid) line($line)"
+          exit
+        fi
+        link_tid_indexes[$event_tid]=$((${link_tid_indexes[$event_tid]} - 1))
+        enter_=${link_stack[$event_tid,${link_tid_indexes[$event_tid]}]}
+        exit_=$timestamp_adjusted
+        duration=$(echo "$exit_ - $enter_" | bc -l 2>/dev/null)
+        if test -z $duration
+        then
+          echo "Failed link duration. Enter($enter_) Exit($exit_) at tid($event_tid) matching($matching_tid) index(${link_tid_indexes[$event_tid]}) line($line)"
+          exit
+        fi
+        echo "Link, root, LINK, $enter_, $exit_, $duration, PTP, ${tid_symbols[$matching_tid]}, ${tid_symbols[$event_tid]}, ${link_tid_indexes_permanent[$event_tid]}, $msg_size"
+      fi
+      ;;
+  esac
+done

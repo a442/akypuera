@@ -52,7 +52,7 @@ do
         stack[$event_tid,${tid_indexes[$event_tid]}]=$timestamp_adjusted
         tid_indexes[$event_tid]=$((${tid_indexes[$event_tid]} + 1))
       else # Leave
-        if test -z ${tid_indexes[$event_id]} || test ${tid_indexes[$event_id]} -le 0
+        if test -z ${tid_indexes[$event_tid]} || test ${tid_indexes[$event_tid]} -le 0
         then
           echo "Tried to pop a state from an empty stack at tid($event_id) line($line)"
           exit

@@ -13,7 +13,7 @@ declare -A link_stack #[matching_tid(put, pop = tid),index]
 declare -A link_tid_indexes #[^]
 declare -A link_tid_indexes_permanent #[^]
 
-otfdump $1 | perl -pe 's/[ \t]+/ / ; s/,//g' | grep -v 'Counter:' | while read line
+otfdump $1 | grep -v 'Counter:' | perl -pe 's/[ \t]+/ / ; s/,//g' | while read line
 do
   tokens=( $line )
   timestamp_nonadjusted=${tokens[1]}

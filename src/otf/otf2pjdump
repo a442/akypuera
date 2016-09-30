@@ -2,16 +2,19 @@
 
 # TODO how does the link printing order affects the compensation tool?
 
-declare -A function_symbols #[id]
-declare -A tid_symbols #[tid]
+declare -a function_symbols #[id]
+declare -a send_mark_ct #[tid]
+declare -a wait_mark_ct #[tid]
+declare -A send_mark #[tid,index]
+declare -A wait_mark #[tid,index]
+declare -a tid_symbols #[tid]
 # TODO necessary?
 resolution=0
 declare -A stack #[tid,index]
-declare -A tid_indexes #[tid]
+declare -a tid_indexes #[tid]
 
-declare -A link_stack #[matching_tid(put, pop = tid),index]
-declare -A link_tid_indexes #[^]
-declare -A link_tid_indexes_permanent #[^]
+declare -a link_mark #[matching_tid]
+declare -A link_stack #[send_rank,send_mark]
 
 otfdump $1 | grep -v 'Counter:' | perl -pe 's/[ \t]+/ / ; s/,//g' | while read line
 do
@@ -49,6 +52,28 @@ do
         then
           tid_indexes[$event_tid]=0
         fi
+        # TODO improve this control flow
+        if echo ${function_symbols[$event_id]} | grep -qi send
+        then
+          if test -z ${send_mark_ct[$event_tid]}
+          then
+            send_mark_ct[$event_tid]=0
+          else
+            send_mark_ct[$event_tid]=$((${send_mark_ct[$event_tid]} + 1))
+          fi
+          send_mark[$event_tid,$event_id]=${send_mark_ct[$event_tid]}
+        else
+          if echo ${function_symbols[$event_id]} | grep -qi wait
+          then
+            if test -z ${wait_mark_ct[$event_tid]}
+            then
+              wait_mark_ct[$event_tid]=0
+            else
+              wait_mark_ct[$event_tid]=$((${wait_mark_ct[$event_tid]} + 1))
+            fi
+          wait_mark[$event_tid,$event_id]=${wait_mark_ct[$event_tid]}
+          fi
+        fi
         stack[$event_tid,${tid_indexes[$event_tid]}]=$timestamp_adjusted
         tid_indexes[$event_tid]=$((${tid_indexes[$event_tid]} + 1))
       else # Leave
@@ -69,7 +94,18 @@ do
         fi
         # FIXME
         imbrication=0
-        echo "State, ${tid_symbols[$event_tid]}, STATE, $enter_, $exit_, $duration, $imbrication, ${function_symbols[$event_id]}"
+        # TODO improve control flow
+        if ! test -z ${send_mark[$event_tid,$event_id]}
+        then
+          echo "State, ${tid_symbols[$event_tid]}, STATE, $enter_, $exit_, $duration, $imbrication, ${function_symbols[$event_id]}, ${send_mark[$event_tid,$event_id]}"
+        else
+          if ! test -z ${wait_mark[$event_tid,$event_id]}
+          then
+            echo "State, ${tid_symbols[$event_tid]}, STATE, $enter_, $exit_, $duration, $imbrication, ${function_symbols[$event_id]}, ${wait_mark[$event_tid,$event_id]}"
+          else
+            echo "State, ${tid_symbols[$event_tid]}, STATE, $enter_, $exit_, $duration, $imbrication, ${function_symbols[$event_id]}"
+          fi
+        fi
       fi
       ;;
     "SendMessage:" | "ReceiveMessage:" )
@@ -80,29 +116,23 @@ do
       msg_size=${tokens[12]}
       if test "$event_type" = "SendMessage:"
       then
-        if test -z ${link_tid_indexes[$matching_tid]}
-        then
-          link_tid_indexes[$matching_tid]=0
-        fi
-        link_stack[$matching_tid,${link_tid_indexes[$matching_tid]}]=$timestamp_adjusted
-        link_tid_indexes[$matching_tid]=$((${link_tid_indexes[$matching_tid]} + 1))
-        link_tid_indexes_permanent[$matching_tid]=$((${link_tid_indexes_permanent[$matching_tid]} + 1))
+        link_stack[$event_tid,${send_mark_ct[$event_tid]}]=$timestamp_adjusted
       else # Recv
-        if test -z ${link_tid_indexes[$event_tid]} || test ${link_tid_indexes[$event_tid]} -le 0
+        if test -z ${link_mark[$matching_tid]}
         then
-          echo "Tried to pop a link from an empty stack at tid($event_tid) matching($matching_tid) line($line)"
-          exit
+          link_mark[$matching_tid]=0
+        else
+          link_mark[$matching_tid]=$((${link_mark[$matching_tid]} + 1))
         fi
-        link_tid_indexes[$event_tid]=$((${link_tid_indexes[$event_tid]} - 1))
-        enter_=${link_stack[$event_tid,${link_tid_indexes[$event_tid]}]}
+        enter_=${link_stack[$matching_tid,${link_mark[$matching_tid]}]}
         exit_=$timestamp_adjusted
         duration=$(echo "$exit_ - $enter_" | bc -l 2>/dev/null)
         if test -z $duration
         then
-          echo "Failed link duration. Enter($enter_) Exit($exit_) at tid($event_tid) matching($matching_tid) index(${link_tid_indexes[$event_tid]}) line($line)"
+          echo "Failed link duration. Enter($enter_) Exit($exit_) at tid($event_tid) matching($matching_tid) index(${link_mark[$matching_tid]}) link stack(${!link_stack[@]}) line($line)"
           exit
         fi
-        echo "Link, root, LINK, $enter_, $exit_, $duration, PTP, ${tid_symbols[$matching_tid]}, ${tid_symbols[$event_tid]}, ${link_tid_indexes_permanent[$event_tid]}, $msg_size"
+        echo "Link, root, LINK, $enter_, $exit_, $duration, PTP, ${tid_symbols[$matching_tid]}, ${tid_symbols[$event_tid]}, ${link_mark[$matching_tid]}, $msg_size"
       fi
       ;;
   esac

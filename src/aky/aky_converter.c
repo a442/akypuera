@@ -281,6 +281,14 @@ int main(int argc, char **argv)
       poti_CreateContainer(timestamp, mpi_process,
                            "PROCESS", "root", mpi_process);
       break;
+    case MPI_WTIME_IN:
+      snprintf(mpi_process, AKY_DEFAULT_STR_SIZE, "rank%"PRIu64"", event.id1);
+      char value[AKY_DEFAULT_STR_SIZE];
+      snprintf(value, AKY_DEFAULT_STR_SIZE, "%s", name_get(event.type));
+      char mark[21];
+      snprintf(mark, 21, "%"PRIu64, event.v_uint64[0]);
+      poti_UPushState (specialPushState, event.timestamp, mpi_process, "STATE", value, 1, mark);
+      break;
     case MPI_COMM_SPAWN_IN:
     case MPI_COMM_GET_NAME_IN:
     case MPI_COMM_SET_NAME_IN:
@@ -345,7 +353,6 @@ int main(int argc, char **argv)
     case MPI_GET_PROCESSOR_NAME_IN:
     case MPI_INITIALIZED_IN:
     case MPI_WTICK_IN:
-    case MPI_WTIME_IN:
     case MPI_ADDRESS_IN:
     case MPI_BSEND_IN:
     case MPI_BSEND_INIT_IN:
